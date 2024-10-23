@@ -1,22 +1,57 @@
 const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
-dotenv.config();
-
-const aiRoutes = require('./routes/aiRoutes');
-const authRoutes = require('./routes/authRoutes');
+const axios = require('axios');
+const morgan = require('morgan');
+const helmet = require('helmet');
+require('dotenv').config();
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+app.use(morgan('dev'));
+app.use(helmet());
 
-// Rutas
-app.use('/api/ai', aiRoutes);
-app.use('/api/auth', authRoutes);
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Manejo de errores
-const errorHandler = require('./middlewares/errorHandler');
-app.use(errorHandler);
+const { Configuration, OpenAIApi } = require("openai");
+const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAIApi(configuration);
+
+const hfClient = axios.create({
+  baseURL: 'https://api-inference.huggingface.co/models/',
+  headers: { Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}` }
+});
+
+// Route: Basic OpenAI interaction
+app.post('/openai', async (req, res) => {
+  const { prompt } = req.body;
+  try {
+    const response = await openai.createCompletion({
+      model: "text-davinci-003",
+      prompt: prompt,
+      max_tokens: 150,
+    });
+    res.json({ text: response.data.choices[0].text });
+  } catch (error) {
+    res.status(500).json({ error: 'Error interacting with OpenAI', details: error.message });
+  }
+});
+
+// Route: Hugging Face interaction
+app.post('/huggingface', async (req, res) => {
+  const { text } = req.body;
+  try {
+    const response = await hfClient.post('model_name', { inputs: text });
+    res.json({ result: response.data });
+  } catch (error) {
+    res.status(500).json({ error: 'Error interacting with Hugging Face', details: error.message });
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
+});
 
 const port = process.env.PORT || 5000;
 app.listen(port, () => {
